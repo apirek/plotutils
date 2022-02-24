@@ -51,4 +51,9 @@ for file in args.files:
                 time.sleep(max(delay - (_exit - _enter), 0))
             prev_timestamp = timestamp
             _enter = time.monotonic()
-            print(line, end="", flush=True)
+            # https://docs.python.org/3/library/signal.html#note-on-sigpipe
+            try:
+                print(line, flush=True)
+            except BrokenPipeError:
+                sys.stderr.close()
+                sys.exit(32) # EPIPE
