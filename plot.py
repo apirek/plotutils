@@ -24,7 +24,7 @@ from argparse import ArgumentParser, ArgumentError
 from contextvars import ContextVar
 from datetime import datetime
 from functools import partial
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 
 import numpy as np
 import pyqtgraph as pg
@@ -137,6 +137,7 @@ class App(QtGui.QApplication):
         #pg.setConfigOption("useOpenGL", True)
         #pg.setConfigOption("enableExperimental", True)
 
+        self.lock = Lock()
         self.series = None # type: list[list[int]]
         self.plots = None # type: list[pg.PlotDataItem]
 
@@ -226,6 +227,7 @@ class App(QtGui.QApplication):
         delimiter = self.options.delimiter
         timefmt = self.options.timefmt
         strptime = datetime.strptime
+        lock = self.lock
         series = self.series
         newData = self.newData
         while True:
@@ -236,15 +238,16 @@ class App(QtGui.QApplication):
             except ValueError as e:
                 break
             try:
-                fields = line.split(delimiter)
-                if series is None:
-                    series = self.series = [[] for _ in fields]
-                series[0].append(strptime(fields[0], timefmt).timestamp())
-                for i, field in enumerate(fields[1:], 1):
-                    try:
-                        series[i].append(float(field))
-                    except ValueError:
-                        series[i].append(float("nan"))
+                with lock:
+                    fields = line.split(delimiter)
+                    if series is None:
+                        series = self.series = [[] for _ in fields]
+                    series[0].append(strptime(fields[0], timefmt).timestamp())
+                    for i, field in enumerate(fields[1:], 1):
+                        try:
+                            series[i].append(float(field))
+                        except ValueError:
+                            series[i].append(float("nan"))
             except Exception as e:
                 print(f"{e} on line {line}", file=sys.stderr)
             else:
@@ -252,16 +255,17 @@ class App(QtGui.QApplication):
 
     def _update(self):
         assert self.series is not None
-        if self.plots is None:
-            self.plots = self.addPlots(len(self.series[1:]))
-        if self.options.reltime:
-            self.timeReferenceChanged.emit(self.series[0][-1])
-        if (window := self.options.window):
-            xmax = self.series[0][-1]
-            xmin = xmax - window
-            self.windowChanged.emit(xmin, xmax)
-        for series, plot in zip(self.series[1:], self.plots):
-            plot.setData(x=self.series[0], y=series)
+        with self.lock:
+            if self.plots is None:
+                self.plots = self.addPlots(len(self.series[1:]))
+            if self.options.reltime:
+                self.timeReferenceChanged.emit(self.series[0][-1])
+            if (window := self.options.window):
+                xmax = self.series[0][-1]
+                xmin = xmax - window
+                self.windowChanged.emit(xmin, xmax)
+            for series, plot in zip(self.series[1:], self.plots):
+                plot.setData(x=self.series[0], y=series)
         #self._update_counter += 1
 
 
