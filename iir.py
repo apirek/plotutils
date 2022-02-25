@@ -22,6 +22,13 @@ import sys
 from argparse import ArgumentParser
 
 
+def to_float(field):
+    try:
+        return float(field)
+    except ValueError:
+        return float("nan")
+
+
 signal.signal(signal.SIGINT, lambda signum, frame: sys.exit())
 
 argparser = ArgumentParser(description="Apply Infinite Impulse Response to CSV data")
@@ -45,7 +52,7 @@ avgs = None
 for line in sys.stdin:
     fields = line.split(delimiter)
     fields = [field for slice in slices for field in fields[slice]]
-    values = list(map(float, fields))
+    values = list(map(to_float, fields))
     if avgs is None:
         avgs = list(values)
     for i, field in enumerate(fields):
