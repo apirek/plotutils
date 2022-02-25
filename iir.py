@@ -19,8 +19,21 @@
 import argparse
 import signal
 import sys
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentTypeError
 
+
+def _range(type, min=None, max=None):
+    def _range(arg):
+        try:
+            f = type(arg)
+        except ValueError as e:
+            raise ArgumentTypeError(e)
+        if min is not None and f < min:
+            raise ArgumentTypeError(f"must be >= {min}")
+        if max is not None and f > max:
+            raise ArgumentTypeError(f"must be <= {max}")
+        return f
+    return _range
 
 def _slice(arg):
     slice_ = slice(*[int(s) if s else None for s in arg.split(":")])
@@ -45,12 +58,11 @@ argparser.add_argument("-d", "--delimiter", default="\t",
         help="field delimiter")
 argparser.add_argument("-f", "--field", action="extend", nargs="+", dest="fields", type=_slice,
         help="field indices or ranges, starting from 0")
-argparser.add_argument("-n", "--num", required=True, type=int)
+argparser.add_argument("-n", "--num", required=True, type=_range(int, 1))
 args = argparser.parse_args()
 delimiter = args.delimiter
 slices = args.fields or [slice(None)]
 n = args.num
-assert 1 <= num
 
 avgs = None
 for line in sys.stdin:
