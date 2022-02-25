@@ -22,6 +22,15 @@ import sys
 from argparse import ArgumentParser
 
 
+def _slice(arg):
+    slice_ = slice(*[int(s) if s else None for s in arg.split(":")])
+    if slice_.start is None and slice_.stop is not None:
+        slice_ = slice(slice_.stop, slice_.stop + 1)
+    return slice_
+
+def to_indices(slices, fields):
+    return [i for slice in slices for i in range(*slice.indices(len(fields)))]
+
 def to_float(field):
     try:
         return float(field)
@@ -34,28 +43,22 @@ signal.signal(signal.SIGINT, lambda signum, frame: sys.exit())
 argparser = ArgumentParser(description="Apply Infinite Impulse Response to CSV data")
 argparser.add_argument("-d", "--delimiter", default="\t",
         help="field delimiter")
-argparser.add_argument("-f", "--field", action="extend", nargs="+", dest="fields")
+argparser.add_argument("-f", "--field", action="extend", nargs="+", dest="fields", type=_slice,
+        help="field indices or ranges, starting from 0")
 argparser.add_argument("-n", "--num", required=True, type=int)
 args = argparser.parse_args()
 delimiter = args.delimiter
-#to_slice = lambda field: slice(*[int(arg) if arg else None for arg in field.split(":")])
-def to_slice(field):
-    slice_ = slice(*[int(arg) if arg else None for arg in field.split(":")])
-    if slice_.start is None and slice_.stop is not None:
-        slice_ = slice(slice_.stop, slice_.stop + 1)
-    return slice_
-slices = [to_slice(field) for field in (args.fields if args.fields else [":"])]
+slices = args.fields or [slice(None)]
 n = args.num
 assert 1 <= num
 
 avgs = None
 for line in sys.stdin:
-    fields = line.split(delimiter)
-    fields = [field for slice in slices for field in fields[slice]]
-    values = list(map(to_float, fields))
+    fields = line.removesuffix("\n").split(delimiter)
+    values = [to_float(fields[i]) for i in to_indices(slices, fields)]
     if avgs is None:
         avgs = list(values)
-    for i, field in enumerate(fields):
+    for i in range(len(values)):
         avgs[i] = ((avgs[i] * n) - avgs[i] + values[i]) / n
     line = delimiter.join(map(str, avgs))
     # https://docs.python.org/3/library/signal.html#note-on-sigpipe

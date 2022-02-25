@@ -24,24 +24,37 @@ from argparse import ArgumentParser
 from datetime import datetime
 
 
+def _slice(arg):
+    slice_ = slice(*[int(s) if s else None for s in arg.split(":")])
+    if slice_.start is None and slice_.stop is not None:
+        slice_ = slice(slice_.stop, slice_.stop + 1)
+    return slice_
+
+def to_indices(slices, fields):
+    return [i for slice in slices for i in range(*slice.indices(len(fields)))]
+
+
 signal.signal(signal.SIGINT, lambda signum, frame: sys.exit())
 
 argparser = ArgumentParser(description="Replay time-series CSV data")
 argparser.add_argument("-d", "--delimiter", default="\t",
         help="field delimiter")
-argparser.add_argument("-f", "--timefmt", default="%Y-%m-%d %H:%M:%S.%f")
+argparser.add_argument("-f", "--field", action="extend", nargs="+", dest="fields", type=_slice,
+        help="field indices or ranges, starting from 0")
+argparser.add_argument("-t", "--timefmt", default="%Y-%m-%d %H:%M:%S.%f")
 argparser.add_argument("files", nargs="+")
-
 args = argparser.parse_args()
 delimiter = args.delimiter
+slices = args.fields or [slice(None)]
 timefmt = args.timefmt
-prev_timestamp = None
 
+prev_timestamp = None
 _enter = time.monotonic()
 for file in args.files:
     with open(file) as f:
         for line in f:
             fields = line.removesuffix("\n").split(delimiter)
+            fields = [fields[i] for i in to_indices(slices, fields)]
             try:
                 timestamp = datetime.strptime(fields[0], timefmt)
             except ValueError as e:

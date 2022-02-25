@@ -96,11 +96,20 @@ class RelTimeAxisItem(pg.AxisItem):
         return strings
 
 
+def _slice(arg):
+    slice_ = slice(*[int(s) if s else None for s in arg.split(":")])
+    if slice_.start is None and slice_.stop is not None:
+        slice_ = slice(slice_.stop, slice_.stop + 1)
+    return slice_
+
+
 class App(QtGui.QApplication):
     argparser = ArgumentParser(description="Plot time-series data in realtime")
     argparser.add_argument("-d", "--delimiter", default="\t",
             help="The field delimiter")
-    argparser.add_argument("-f", "--timefmt", default="%Y-%m-%d %H:%M:%S.%f",
+    argparser.add_argument("-f", "--field", action="extend", nargs="+", dest="fields", type=_slice,
+            help="The fields to plot")
+    argparser.add_argument("-t", "--timefmt", default="%Y-%m-%d %H:%M:%S.%f",
             help="The timestamp format (strptime(3) format string)")
     group = argparser.add_mutually_exclusive_group()
     group.add_argument("-r", "--reltime", default=True, action="store_true", dest="reltime",
@@ -131,6 +140,7 @@ class App(QtGui.QApplication):
     def __init__(self, argv: list[str] = []):
         super().__init__(argv)
         self.options = self.argparser.parse_args(self.arguments()[1:])
+        self.options.fields = self.options.fields or [slice(None)]
 
         # OpenGL.error.Error: Attempt to retrieve context when no valid context
         ## https://stackoverflow.com/a/63869178
@@ -225,6 +235,9 @@ class App(QtGui.QApplication):
 
     def read(self, f: io.TextIOBase):
         delimiter = self.options.delimiter
+        def _indices(fields):
+            return [i for slice in self.options.fields for i in range(*slice.indices(len(fields)))]
+        indices = None
         timefmt = self.options.timefmt
         strptime = datetime.strptime
         lock = self.lock
@@ -240,6 +253,9 @@ class App(QtGui.QApplication):
             try:
                 with lock:
                     fields = line.split(delimiter)
+                    if indices is None:
+                        indices = _indices(fields)
+                    fields = [fields[i] for i in indices]
                     if series is None:
                         series = self.series = [[] for _ in fields]
                     series[0].append(strptime(fields[0], timefmt).timestamp())
