@@ -42,7 +42,11 @@ for file in args.files:
     with open(file) as f:
         for line in f:
             fields = line.removesuffix("\n").split(delimiter)
-            timestamp = datetime.strptime(fields[0], timefmt)
+            try:
+                timestamp = datetime.strptime(fields[0], timefmt)
+            except ValueError as e:
+                print(f"Error: {e}, line: {line}, file: {file}", file=sys.stderr)
+                continue
             now = datetime.now()
             line = delimiter.join([now.strftime(timefmt)] + fields[1:])
             if prev_timestamp is not None:
