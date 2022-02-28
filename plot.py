@@ -257,7 +257,11 @@ class App(QtGui.QApplication):
         assert self.series is not None
         with self.lock:
             if self.plots is None:
-                self.plots = self.addPlots(len(self.series[1:]))
+                try:
+                    self.plots = self.addPlots(len(self.series[1:]))
+                except:
+                    sys.excepthook(*sys.exc_info())
+                    sys.exit(1)
             if self.options.reltime:
                 self.timeReferenceChanged.emit(self.series[0][-1])
             if (window := self.options.window):
