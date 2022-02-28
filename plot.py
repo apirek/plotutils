@@ -261,8 +261,14 @@ class App(QtGui.QApplication):
             if self.options.reltime:
                 self.timeReferenceChanged.emit(self.series[0][-1])
             if (window := self.options.window):
-                xmax = self.series[0][-1]
+                xs = self.series[0]
+                xmax = xs[-1]
                 xmin = xmax - window
+                for i in range(len(xs)):
+                    if xs[i] >= xmin:
+                        break
+                for series in self.series:
+                    del series[:i]
                 self.windowChanged.emit(xmin, xmax)
             for series, plot in zip(self.series[1:], self.plots):
                 plot.setData(x=self.series[0], y=series)
