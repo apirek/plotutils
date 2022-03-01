@@ -22,6 +22,7 @@ import sys
 import time
 from argparse import ArgumentParser, ArgumentError
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from threading import Event, Lock, Thread
@@ -96,11 +97,101 @@ class RelTimeAxisItem(pg.AxisItem):
         return strings
 
 
+class _ViewBox(pg.ViewBox):
+    def setYRange(self, min, max, span, padding=None, update=True):
+        if min is not None and max is not None:
+            self.setRange(yRange=[min, max], update=update, padding=padding)
+        else:
+            self.state["ySpan"] = span
+
+    def updateAutoRange(self):
+        # https://github.com/pyqtgraph/pyqtgraph/blob/pyqtgraph-0.11.1/pyqtgraph/graphicsItems/ViewBox/ViewBox.py#L857
+        if self._updatingRange:
+            return
+        self._updatingRange = True
+        try:
+            targetRect = self.viewRange()
+            if not any(self.state['autoRange']):
+                return
+
+            fractionVisible = self.state['autoRange'][:]
+            for i in [0,1]:
+                if type(fractionVisible[i]) is bool:
+                    fractionVisible[i] = 1.0
+
+            childRange = None
+
+            order = [0,1]
+            if self.state['autoVisibleOnly'][0] is True:
+                order = [1,0]
+
+            args = {}
+            for ax in order:
+                if self.state['autoRange'][ax] is False:
+                    continue
+                if self.state['autoVisibleOnly'][ax]:
+                    oRange = [None, None]
+                    oRange[ax] = targetRect[1-ax]
+                    childRange = self.childrenBounds(frac=fractionVisible, orthoRange=oRange)
+                else:
+                    if childRange is None:
+                        childRange = self.childrenBounds(frac=fractionVisible)
+                ## Make corrections to range
+                xr = childRange[ax]
+                if xr is not None:
+                    if self.state['autoPan'][ax]:
+                        x = sum(xr) * 0.5
+                        w2 = (targetRect[ax][1]-targetRect[ax][0]) / 2.
+                        childRange[ax] = [x-w2, x+w2]
+                    else:
+                        padding = self.suggestPadding(ax)
+                        wp = (xr[1] - xr[0]) * padding
+                        childRange[ax][0] -= wp
+                        childRange[ax][1] += wp
+                    if (span := self.state.get("xSpan" if ax == 0 else "ySpan")):
+                        d = span - abs(childRange[ax][0] - childRange[ax][1])
+                        childRange[ax][0] -= d / 2
+                        childRange[ax][1] += d / 2
+                    targetRect[ax] = childRange[ax]
+                    args['xRange' if ax == 0 else 'yRange'] = targetRect[ax]
+
+             # check for and ignore bad ranges
+            for k in ['xRange', 'yRange']:
+                if k in args:
+                    if not np.all(np.isfinite(args[k])):
+                        r = args.pop(k)
+                        #print("Warning: %s is invalid: %s" % (k, str(r))
+
+            if len(args) == 0:
+                return
+            args['padding'] = 0.0
+            args['disableAutoRange'] = False
+            self.setRange(**args)
+        finally:
+            self._autoRangeNeedsUpdate = False
+            self._updatingRange = False
+
+
 def _slice(arg):
     slice_ = slice(*[int(s) if s else None for s in arg.split(":")])
     if slice_.start is None and slice_.stop is not None:
         slice_ = slice(slice_.stop, slice_.stop + 1)
     return slice_
+
+
+@dataclass
+class AxisRange:
+    min: float = None
+    max: float = None
+    span: float = None
+
+
+def axisrange(arg):
+    if ":" in arg:
+        min, max = arg.split(":")
+        return AxisRange(min=float(min) if min else None, max=float(max) if max else None)
+    else:
+        return AxisRange(span=float(arg))
 
 
 class App(QtGui.QApplication):
@@ -112,26 +203,25 @@ class App(QtGui.QApplication):
     argparser.add_argument("-t", "--timefmt", default="%Y-%m-%d %H:%M:%S.%f",
             help="The timestamp format (strptime(3) format string)")
     group = argparser.add_mutually_exclusive_group()
-    group.add_argument("-r", "--reltime", default=True, action="store_true", dest="reltime",
+    group.add_argument("--reltime", default=True, action="store_true", dest="reltime",
             help="Display timestamps relative to the latest")
-    group.add_argument("-a", "--abstime", action="store_const", const=False, dest="reltime",
+    group.add_argument("--abstime", action="store_const", const=False, dest="reltime",
             help="Display timestamps as wall clock")
     argparser.add_argument("-w", "--window", type=float,
             help="Display window (seconds)")
     argparser.add_argument("-x", "--xlabel", default="Zeit",
             help="The X-Axis label")
-    #argparser.add_argument("-y", "--ylabel", default=[], action="extend", nargs="+", dest="ylabels",
-    #        help="The Y-Axis label")
-    argparser.add_argument("-l", "--label", default=[], action="extend", nargs="+", dest="ylabels",
+    argparser.add_argument("-y", "--ylabel", default=[], action="extend", nargs="+", dest="ylabels",
             help="The Y-Axis label")
     argparser.add_argument("-u", "--unit", default=[], action="extend", nargs="+", dest="yunits",
             help="The Y-Axis base SI unit")
+    argparser.add_argument("-r", "--range", default=[], action="extend", nargs="+", dest="yranges",
+            help="The Y-Axis range", type=axisrange)
     group = argparser.add_mutually_exclusive_group()
     group.add_argument("-s", "--single", default=True, action="store_true", dest="single",
             help="Plot all series in one graph")
     group.add_argument("-m", "--many", action="store_const", const=False, dest="single",
             help="Plot every series in a separate graph")
-    # log file
 
     newData = QtCore.pyqtSignal()
     windowChanged = QtCore.pyqtSignal(float, float)
@@ -177,7 +267,8 @@ class App(QtGui.QApplication):
         plots = []
         for i in range(n):
             if plot_widget is None or not self.options.single:
-                plot_widget = pg.PlotWidget()
+                viewBox = _ViewBox()
+                plot_widget = pg.PlotWidget(viewBox=viewBox)
                 layout.addWidget(plot_widget)
                 # Setze Achsen:
                 axes = {
@@ -209,14 +300,16 @@ class App(QtGui.QApplication):
                 plot_widget.showGrid(x=True, y=True)
 
                 if self.options.window:
-                    plot_widget.disableAutoRange(pg.ViewBox.XAxis)
                     self.windowChanged.connect(partial(plot_widget.setXRange, update=False))
-            if n <= len(COLOR_SCHEMES["Set1"]):
-                pen = pg.mkPen(COLOR_SCHEMES["Set1"][i])
+                if len(self.options.yranges) > i:
+                    yrange = self.options.yranges[i]
+                    plot_widget.setYRange(yrange.min, yrange.max, yrange.span, update=False)
+
+            if n <= len(self.color_scheme):
+                pen = pg.mkPen(self.color_scheme[i], width=3)
             else:
-                pen = (i, n)
-            #self.plots[i] = pg.PlotDataItem(pen=pen, downsampleMethod="peak", autoDownsample=True, clipToView=True)
-            plot = pg.PlotCurveItem(pen=pen)
+                pen = pg.mkPen(pg.mkColor((i, n)))
+            plot = pg.PlotCurveItem(pen=pen, clipToView=True)
             plot_widget.addItem(plot)
             plots.append(plot)
         # Verknüpfe X-Achsen.
