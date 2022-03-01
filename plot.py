@@ -258,6 +258,15 @@ class App(QtGui.QApplication):
         self.window.setCentralWidget(widget)
         layout = QtWidgets.QVBoxLayout(widget)
 
+        palette = self.palette()
+        #if palette.color(QtGui.QPalette.Base).lightness() > 127:
+        #    # Light Mode
+        #else:
+        #    # Dark Mode
+        pg.setConfigOption("background", palette.color(QtGui.QPalette.Background))
+        pg.setConfigOption("foreground", palette.color(QtGui.QPalette.Text))
+        self.color_scheme = COLOR_SCHEMES["Dark2"]
+
         self.window.resize(1280, 960)
         self.window.show()
 
@@ -297,7 +306,11 @@ class App(QtGui.QApplication):
                     label = self.options.xlabel
                     plot_widget.setLabel(axis, label)
 
+                # TypeError: setValue(self, int): argument 1 has unexpected type 'numpy.float64'
+                #plot_widget.showGrid(x=True, y=True, alpha=0.33)
                 plot_widget.showGrid(x=True, y=True)
+                ctrl = plot_widget.plotItem.ctrl.gridAlphaSlider
+                ctrl.setValue(int(0.25 * ctrl.maximum()))
 
                 if self.options.window:
                     self.windowChanged.connect(partial(plot_widget.setXRange, update=False))
